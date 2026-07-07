@@ -1,0 +1,12 @@
+# Core
+python-dotenv        # load .env
+requests             # ElevenLabs REST + Baseer HTTP
+
+# OCR / vision LLMs
+openai               # GPT-4o vision (transcribe.py, benchmark_ocr.py, baseer_ocr.py)
+anthropic            # Claude Opus vision fallback (opus_ocr.py) — optional at runtime
+
+# Audio
+lameenc              # WAV → MP3 encoding (no ffmpeg needed)
+
+# hadith_lookup.py / quran_lookup.py / convert_translit.py use only the stdlib.

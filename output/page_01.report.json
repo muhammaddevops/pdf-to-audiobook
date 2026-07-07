@@ -1,0 +1,19 @@
+{
+  "image": "page1.png",
+  "blocks": [
+    {
+      "id": 1,
+      "collection": "Sunan al-Tirmidhi",
+      "number": "478",
+      "method": "keyed",
+      "score": 1.0
+    },
+    {
+      "id": 2,
+      "collection": "Musnad Ahmad",
+      "number": "23565",
+      "method": "flagged",
+      "score": 0.0
+    }
+  ]
+}
