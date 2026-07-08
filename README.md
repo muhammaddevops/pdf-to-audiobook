@@ -12,28 +12,35 @@ bookImages/*.png                     page scans
       │  Baseer OCR (specialist Arabic OCR, faithful on vocalized script)
       ▼
 baseerOutput/*.txt                   English prose + Arabic blocks + romanized terms
+      │  arabize.py  (GPT-4o):  convert Arabic-origin Romanized terms
+      │                         (al-Tirmidhī → الترمذي, Ṣaḥīḥ → صحيح) to BARE
+      │                         Arabic script — no harakat, the voice vowels them;
+      │                         existing vocalized Arabic blocks left untouched
+      ▼
+arabizedOutput/*.txt                 English prose + Arabic-script inline terms + blocks
       │  narrate.py  (deterministic, no LLM):
       │    • build_document()  — merge pages into one continuous document so
       │                          sentences flow across page seams
       │    • preprocess()      — expand honorifics inline (ﷺ → "peace be upon him"),
-      │                          fold transliteration diacritics to plain English
-      │                          (al-Tirmidhī → al-Tirmidhi), spell out numbers,
-      │                          apply the CORRECTIONS map, strip markdown
+      │                          spell out numbers, strip markdown, clean stray marks
       │    • chunk + request-stitch, one ElevenLabs call per chunk
       ▼
-audio/full_book.wav                  one continuous narration  →  .mp3 via lameenc
+audio/full_book_<model>.wav          one continuous narration  →  .mp3 via lameenc
 ```
 
-The Arabic block quotes are recited natively by the multilingual voice; inline
-names/citations are read as clean anglicized English (Daniel voice). See
-[`docs/tts_narration_best_practices.md`](docs/tts_narration_best_practices.md).
+One voice reads the whole page, code-switching inside the sentence: English prose
+in English, the inline Arabic-script terms and the vocalized block quotes recited
+natively. A/B the read across models with `ELEVENLABS_MODEL` (multilingual v2 vs
+eleven_v3). See [`docs/tts_narration_best_practices.md`](docs/tts_narration_best_practices.md).
 
 ## Repo layout
 
 | Path | What |
 |---|---|
-| `narrate.py` | **Main pipeline** — text → `audio/full_book.wav` (ElevenLabs) |
-| `baseerOutput/` | Baseer OCR text (pipeline input) |
+| `arabize.py` | **Pre-narration step** — GPT-4o converts Romanized terms → Arabic script (`baseerOutput/` → `arabizedOutput/`) |
+| `narrate.py` | **Main pipeline** — text → `audio/full_book_<model>.wav` (ElevenLabs) |
+| `baseerOutput/` | Baseer OCR text (arabize.py input) |
+| `arabizedOutput/` | Arabic-script script (narrate.py input; generated) |
 | `bookImages/` | Source page scans |
 | `convert_translit.py` | Romanized → Arabic-script conversion (dictionary; feeds `opusAfterBaseer/`) |
 | `opusAfterBaseer/` | Arabic-inline variant of the text (alternative voice path) |
@@ -56,14 +63,18 @@ cp .env.example .env      # then fill in ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID
 ## Usage
 
 ```bash
-# Narrate all pages in baseerOutput/ into one continuous file
-python narrate.py                    # → audio/full_book.wav
+# 1. Convert Romanized Arabic terms to Arabic script (baseerOutput/ → arabizedOutput/)
+python arabize.py
+
+# 2. Narrate all pages into one continuous file
+python narrate.py                    # → audio/full_book_eleven_multilingual_v2.wav
+ELEVENLABS_MODEL=eleven_v3 python narrate.py   # A/B the same text on v3
 python narrate.py path/to/textdir    # narrate a different folder
 
 # Convert a rendered WAV to MP3 (128 kbps mono, no ffmpeg)
 python - <<'PY'
 import wave, lameenc
-w = wave.open("audio/full_book.wav","rb"); pcm = w.readframes(w.getnframes())
+w = wave.open("audio/full_book_eleven_multilingual_v2.wav","rb"); pcm = w.readframes(w.getnframes())
 e = lameenc.Encoder(); e.set_bit_rate(128); e.set_in_sample_rate(w.getframerate())
 e.set_channels(1); e.set_quality(2)
 open("audio/full_book.mp3","wb").write(e.encode(pcm)+e.flush())

@@ -15,6 +15,9 @@ venv/
 # --- Generated audio (large; regenerate with narrate.py) ---
 audio/
 
+# --- Generated arabized script (regenerate with arabize.py; needs OPENAI_API_KEY) ---
+arabizedOutput/
+
 # --- OS / editor / tooling ---
 .DS_Store
 .claude/

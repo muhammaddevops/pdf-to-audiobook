@@ -1,8 +1,24 @@
 # TTS Narration Best Practices (ElevenLabs — Daniel / `eleven_multilingual_v2`)
 
 Reference for keeping the narration flowing and pausing only where it should.
-Our pipeline is [`narrate.py`](../narrate.py): Baseer OCR text → `preprocess()` →
-one ElevenLabs call per page (multilingual v2, Daniel voice `onwK4e9ZLuTAKqWW03F9`).
+Our pipeline is [`arabize.py`](../arabize.py) → [`narrate.py`](../narrate.py):
+Baseer OCR text → Arabic-origin terms converted to bare Arabic script → merge +
+`preprocess()` → one ElevenLabs call per chunk (Daniel voice `onwK4e9ZLuTAKqWW03F9`).
+
+## Mixed Arabic/English read (single voice)
+
+The script feeds the voice English prose with inline **Arabic-script** terms
+(names, citation titles, technical terms) so it code-switches natively instead of
+mispronouncing romanized Latin (`al-Tirmidhī`). The converted terms are left
+**unvocalized** — the voice supplies the vowels; injected harakat only adds
+pronunciation-error risk. The pre-existing block quotes keep their source harakat.
+
+The frequent mid-sentence English↔Arabic switches are the hardest case for the
+model, so A/B the model before committing a full render:
+`ELEVENLABS_MODEL=eleven_v3 python narrate.py` renders the same text on
+`eleven_v3` (more context-aware on switches, but a 3000-char/request cap and **no
+`<break>` tags**) next to the `multilingual_v2` default. Renders are written to
+`audio/full_book_<model>.wav` — listen and pick.
 
 ## How the model decides where to pause
 

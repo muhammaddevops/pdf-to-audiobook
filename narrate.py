@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """narrate.py — bilingual text → smooth storyteller audio via ElevenLabs.
 
-Single-voice pipeline: Baseer OCR output → normalize for TTS → one warm English
-storyteller voice (multilingual v2) reads the whole thing, reciting the Arabic
-block quotes natively and reading inline terms as plain anglicized English.
+Single-voice pipeline: arabized script → normalize for TTS → one warm storyteller
+voice reads the whole thing, code-switching inside the sentence — English prose in
+English, and the inline Arabic-script terms (from arabize.py) recited natively
+alongside the vocalized Arabic block quotes.
 
-  baseerOutput/*.txt → preprocess() → ElevenLabs (one call per page) → audio/
+  arabizedOutput/*.txt → preprocess() → ElevenLabs (one call per chunk) → audio/
+
+Run arabize.py first so Arabic-origin terms are already in Arabic script; the
+voice then pronounces them natively instead of mangling the transliteration.
+Set ELEVENLABS_MODEL=eleven_v3 to A/B the read against multilingual v2.
 
 Normalization (deterministic, no LLM):
-  * ﷺ → "(peace be upon him)"; ؓ / رضي الله عنه → "(may Allah be pleased with him)".
-  * Latin transliteration diacritics folded to plain English (al-Tirmidhī → al-Tirmidhi)
-    so the English voice reads them smoothly; Arabic blocks + harakat untouched.
-  * A small CORRECTIONS map fixes known Baseer transliteration typos (Ṣuhr → Zuhr).
+  * ﷺ → "peace be upon him"; ؓ / رضي الله عنه → "may Allah be pleased with him".
+  * fold_latin() now only cleans stray transliteration diacritics arabize.py left
+    behind (converted terms are already Arabic script, so it no longer touches them).
   * Markdown emphasis stripped; citations and headers kept and read verbatim.
 
 Audio is assembled from raw PCM with the stdlib `wave` module (no ffmpeg/pydub):
@@ -41,13 +45,22 @@ from typing import Optional
 import requests
 from dotenv import load_dotenv
 
-SRC_DIR = Path("baseerOutput")
+SRC_DIR = Path("arabizedOutput")   # arabize.py output: Arabic-script inline terms
 OUT_DIR = Path("audio")
-MODEL = "eleven_multilingual_v2"
+DEFAULT_MODEL = "eleven_multilingual_v2"
 OUTPUT_FORMAT = "pcm_24000"        # 24 kHz, 16-bit mono PCM
 SAMPLE_RATE = 24000
 API_ROOT = "https://api.elevenlabs.io/v1/text-to-speech"
-MAX_CHARS = 4500                   # split a page above this at paragraph breaks
+
+# Per-request character ceiling. eleven_v3 caps at 3000 chars/request (and drops
+# SSML break tags); multilingual v2 comfortably takes more. Pick by model so the
+# same text A/Bs cleanly across both. See docs/tts_narration_best_practices.md.
+MAX_CHARS_BY_MODEL = {"eleven_v3": 2800}
+MAX_CHARS_DEFAULT = 4500           # split a page above this at paragraph breaks
+
+
+def max_chars_for(model: str) -> int:
+    return MAX_CHARS_BY_MODEL.get(model, MAX_CHARS_DEFAULT)
 
 # Smooth, clear storyteller feel: steady, high fidelity, a touch of warmth,
 # slightly slower than default for a measured, narrated pace.
@@ -210,7 +223,7 @@ def preprocess(text: str) -> str:
     return text.strip()
 
 
-def chunk(text: str, max_chars: int = MAX_CHARS) -> list[str]:
+def chunk(text: str, max_chars: int = MAX_CHARS_DEFAULT) -> list[str]:
     """Group paragraphs into request-sized chunks, splitting only at blank lines.
 
     Most pages fit in a single chunk (one API call → smoothest prosody); only
@@ -265,13 +278,14 @@ def build_document(files: list[Path]) -> str:
 def synthesize(
     api_key: str,
     voice_id: str,
+    model: str,
     text: str,
     prev_text: Optional[str],
     next_text: Optional[str],
     timeout: float = 180.0,
 ) -> Optional[bytes]:
     """Return raw PCM bytes for one chunk, or None on failure."""
-    body = {"text": text, "model_id": MODEL, "voice_settings": VOICE_SETTINGS}
+    body = {"text": text, "model_id": model, "voice_settings": VOICE_SETTINGS}
     if prev_text:
         body["previous_text"] = prev_text
     if next_text:
@@ -329,6 +343,9 @@ def main(argv: list[str]) -> int:
         print("[fatal] ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID must be set in .env.",
               file=sys.stderr)
         return 2
+    # A/B the read across models: `ELEVENLABS_MODEL=eleven_v3 python narrate.py`.
+    model = os.environ.get("ELEVENLABS_MODEL", DEFAULT_MODEL)
+    max_chars = max_chars_for(model)
 
     folder = Path(argv[1]) if len(argv) > 1 else SRC_DIR
     files = sorted((p for p in folder.glob("*.txt") if p.stat().st_size > 0), key=natural_key)
@@ -341,9 +358,9 @@ def main(argv: list[str]) -> int:
     # Merge all pages into one continuous document (sentences flow across page
     # seams), then chunk by size at paragraph boundaries — so no cut lands
     # mid-sentence. previous_text/next_text carries prosody across chunk seams.
-    chunks = chunk(preprocess(build_document(files)))
+    chunks = chunk(preprocess(build_document(files)), max_chars)
     print(f"Narrating {len(files)} page(s) from {folder}/ as one continuous book "
-          f"→ {len(chunks)} chunk(s)  (voice {voice[:8]}…)\n")
+          f"→ {len(chunks)} chunk(s)  ({model}, voice {voice[:8]}…)\n")
 
     book_pcm = bytearray()
     failures = 0
@@ -351,7 +368,7 @@ def main(argv: list[str]) -> int:
         prev = chunks[i - 1] if i > 0 else None
         nxt = chunks[i + 1] if i + 1 < len(chunks) else None
         t0 = time.perf_counter()
-        pcm = synthesize(api_key, voice, piece, prev, nxt)
+        pcm = synthesize(api_key, voice, model, piece, prev, nxt)
         if pcm is None:
             failures += 1
             continue
@@ -361,7 +378,8 @@ def main(argv: list[str]) -> int:
             book_pcm += silence(PAUSE_BETWEEN_CHUNKS)
         book_pcm += pcm
 
-    book_path = OUT_DIR / "full_book.wav"
+    # Name the render after the model so v2/v3 A/B runs don't overwrite each other.
+    book_path = OUT_DIR / f"full_book_{model}.wav"
     total = write_wav(book_path, bytes(book_pcm))
     print(f"\n→ {book_path}  ({total/60:.1f} min continuous)")
     print(f"Done. {failures} chunk(s) failed." if failures else "Done. All chunks OK.")
