@@ -6,21 +6,23 @@ The narration voice mispronounces Latin-transliterated Arabic terms
 old narrate.py behaviour), we convert every Arabic-origin term to Arabic *script*
 so the multilingual voice reads it natively, code-switching inside the sentence.
 
-An LLM does the conversion because the term set is open-ended (names, place
-names, scholar names, citation titles, grading + technical terms) and a hand
-dictionary (convert_translit.py) can't keep up. Per the design decision, the
-converted terms are left BARE — no harakat — and the TTS voice supplies the
-vowels; injecting tashkeel would only add pronunciation-error risk. The Arabic
-block quotes already printed on the page keep their existing vocalization,
-untouched.
+Two-stage, cheapest-first:
 
-  baseerOutput/*.txt → (GPT-4o, JSON) → arabizedOutput/*.txt → narrate.py
+  1. DETERMINISTIC MAP (translit_map.py) — expand honorific glyphs to Arabic words
+     and convert the known/frequent terms to bare Arabic script. Free, consistent,
+     no API call.
+  2. LLM LONG TAIL (Claude Opus) — only if a page still has Latin-transliterated
+     Arabic terms the map didn't cover. Pages fully handled by the map skip the
+     call entirely.
 
-Outputs mirror the input filenames in ./arabizedOutput. A per-file check warns if
-any pre-existing vocalized Arabic block was altered by the model.
+Per the design decision, converted terms are left BARE — no harakat — and the TTS
+voice supplies the vowels; injecting tashkeel only adds pronunciation-error risk.
+The Arabic block quotes already printed on the page keep their vocalization.
+
+  baseerOutput/*.txt → map (+ Opus for the tail) → arabizedOutput/*.txt → narrate.py
 
 Environment (.env):
-  OPENAI_API_KEY   (required)
+  ANTHROPIC_API_KEY   (required only for pages that hit the LLM long tail)
 
 Usage:
   python arabize.py                    # converts ./baseerOutput → ./arabizedOutput
@@ -29,7 +31,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import sys
@@ -38,40 +39,29 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from openai import OpenAI
-from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 
-MODEL = "gpt-4o"
+import translit_map
+
+MODEL = "claude-opus-4-8"
 SRC_DIR = Path("baseerOutput")
 OUT_DIR = Path("arabizedOutput")
 
-ARABIZE_PROMPT = (
-    "You are an expert bilingual (Arabic/English) editor preparing a script for a "
-    "text-to-speech engine. You will be given the raw text of one book page: "
-    "English prose, Arabic-origin terms written in Latin transliteration, "
-    "fully-vocalized Arabic quotation blocks, honorific glyphs, and citations. "
-    "Rewrite the page by converting Arabic-origin terms into Arabic script, "
-    "following these rules EXACTLY:\n\n"
-    "1. CONVERT every Arabic-origin Romanized term into Arabic script: personal "
-    "names, place names, scholar names, source-citation titles, hadith-grading "
-    "terms, and technical religious terms. Examples: 'al-Tirmidhī' → 'الترمذي', "
-    "'Sunan al-Tirmidhi' → 'سنن الترمذي', 'Ṣaḥīḥ' → 'صحيح', 'Abū Ayyūb' → "
-    "'أبو أيوب', 'ḥadīth' → 'حديث', 'Ramadān' → 'رمضان', 'al-Albānī' → 'الألباني'.\n"
-    "2. Do NOT add any tashkeel/harakat (vowel marks) to the Arabic you generate. "
-    "Output BARE, unvocalized Arabic letters only — the TTS voice supplies the "
-    "vowels. Adding harakat is a mistake.\n"
-    "3. Leave any Arabic text ALREADY printed on the page (the vocalized quotation "
-    "blocks) EXACTLY as-is — character for character, including all of its existing "
-    "harakat. Do NOT revocalize, correct, reorder, add to, or drop anything inside "
-    "those blocks.\n"
-    "4. Leave genuinely English / non-Arabic words in English (e.g. 'The Messenger "
-    "of Allah', 'reported', 'chapter', and proper nouns of non-Arabic origin).\n"
-    "5. Leave honorific glyphs (ﷺ, ؓ, ﷻ, and the bracketed 'رضي الله عنه'), Western "
-    "digits, markdown markers (**, *), parentheses, and punctuation untouched.\n"
-    "6. Preserve the paragraph and line structure EXACTLY: same line breaks, same "
-    "order, no summarizing, no translation of meaning, no added commentary.\n\n"
-    'OUTPUT FORMAT: return ONLY a JSON object {"converted": "<the full rewritten '
-    'page text>"}.'
+LLM_PROMPT = (
+    "You are an expert bilingual (Arabic/English) editor preparing a page for a "
+    "text-to-speech engine. Most Arabic-origin terms have already been converted "
+    "to Arabic script; a few Latin-transliterated ones remain. Convert ONLY those "
+    "remaining Romanized Arabic-origin terms (names, place names, scholar names, "
+    "citation titles, grading and technical terms) into Arabic script, following "
+    "these rules EXACTLY:\n\n"
+    "1. Do NOT add any tashkeel/harakat (vowel marks). Output BARE, unvocalized "
+    "Arabic letters only — the TTS voice supplies the vowels.\n"
+    "2. Leave every Arabic word ALREADY on the page EXACTLY as-is, character for "
+    "character, including its existing harakat. Do NOT revocalize or edit it.\n"
+    "3. Leave genuinely English words in English.\n"
+    "4. Leave digits, markdown, parentheses, and punctuation untouched, and "
+    "preserve the line and paragraph structure EXACTLY.\n"
+    "5. Return ONLY the full rewritten page text — no preamble, no commentary, no "
+    "code fences."
 )
 
 
@@ -80,46 +70,31 @@ def natural_key(path: Path) -> list:
     return [int(c) if c.isdigit() else c.lower() for c in re.split(r"(\d+)", path.name)]
 
 
-def arabic_lines(text: str) -> list[str]:
-    """Lines that are majority Arabic (the pre-existing block quotes)."""
-    out = []
-    for line in text.splitlines():
-        letters = [c for c in line if c.strip()]
-        arab = [c for c in line if "؀" <= c <= "ۿ"]
-        if letters and len(arab) / len(letters) > 0.6:
-            out.append(line.strip())
-    return out
+def llm_convert(client, text: str, name: str) -> Optional[str]:
+    """Convert the residual Romanized terms via Claude Opus. Returns text or None."""
+    import anthropic
 
-
-def arabize_page(client: OpenAI, text: str, name: str) -> Optional[str]:
-    """Convert one page's Romanized terms to Arabic script. Returns text or None."""
     start = time.perf_counter()
     try:
-        response = client.chat.completions.create(
+        resp = client.messages.create(
             model=MODEL,
             max_tokens=4096,
-            temperature=0.0,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "user", "content": f"{ARABIZE_PROMPT}\n\n---PAGE---\n{text}"}
-            ],
+            output_config={"effort": "low"},  # mechanical conversion — no deep thinking
+            messages=[{"role": "user", "content": f"{LLM_PROMPT}\n\n---PAGE---\n{text}"}],
         )
-        data = json.loads(response.choices[0].message.content or "{}")
-        converted = (data.get("converted") or "").strip()
-        if not converted:
+        if resp.stop_reason == "refusal":
+            print(f"  ✗ {name}  model refused conversion", file=sys.stderr)
+            return None
+        out = "".join(b.text for b in resp.content if b.type == "text").strip()
+        if not out:
             print(f"  ✗ {name}  model returned empty conversion", file=sys.stderr)
             return None
-        print(f"  ✓ {name}  {time.perf_counter() - start:.1f}s  ({len(converted)} chars)")
-        return converted
-    except (APITimeoutError, APIConnectionError) as exc:
-        print(f"  ✗ {name}  network/timeout: {exc}", file=sys.stderr)
-    except RateLimitError as exc:
-        print(f"  ✗ {name}  rate limited: {exc}", file=sys.stderr)
-    except APIError as exc:
-        code = getattr(exc, "status_code", None)
-        print(f"  ✗ {name}  API error ({code}): {exc}", file=sys.stderr)
-    except (json.JSONDecodeError, KeyError) as exc:
-        print(f"  ✗ {name}  bad JSON from model: {exc}", file=sys.stderr)
+        print(f"    ↳ {name}  Opus long-tail pass  {time.perf_counter() - start:.1f}s")
+        return out
+    except anthropic.APIStatusError as exc:
+        print(f"  ✗ {name}  API error ({exc.status_code}): {exc.message}", file=sys.stderr)
+    except anthropic.APIConnectionError as exc:
+        print(f"  ✗ {name}  connection error: {exc}", file=sys.stderr)
     except Exception as exc:  # final safety net
         print(f"  ✗ {name}  unexpected: {exc}", file=sys.stderr)
     return None
@@ -127,10 +102,6 @@ def arabize_page(client: OpenAI, text: str, name: str) -> Optional[str]:
 
 def main(argv: list[str]) -> int:
     load_dotenv()
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        print("[fatal] OPENAI_API_KEY not set (check your .env).", file=sys.stderr)
-        return 2
 
     folder = Path(argv[1]) if len(argv) > 1 else SRC_DIR
     files = sorted((p for p in folder.glob("*.txt") if p.stat().st_size > 0), key=natural_key)
@@ -139,30 +110,56 @@ def main(argv: list[str]) -> int:
         return 1
 
     OUT_DIR.mkdir(exist_ok=True)
-    client = OpenAI(api_key=api_key, timeout=120.0)
-    print(f"Arabizing {len(files)} page(s) from {folder}/ → {OUT_DIR}/ with {MODEL}\n")
 
+    # Lazily build the LLM client only if a page actually needs the long tail, so
+    # a map-only run needs no ANTHROPIC_API_KEY.
+    client = None
+
+    print(f"Arabizing {len(files)} page(s) from {folder}/ → {OUT_DIR}/\n")
     failures = 0
+    map_only = 0
+    llm_used = 0
     altered = 0
     for f in files:
-        text = f.read_text(encoding="utf-8")
-        converted = arabize_page(client, text, f.name)
-        if converted is None:
-            failures += 1
-            continue
+        raw = f.read_text(encoding="utf-8")
+        # Stage 1: deterministic — honorific glyphs → Arabic words, known terms → script.
+        text = translit_map.expand_honorifics(raw)
+        text, hits = translit_map.apply_map(text)
+
+        # Stage 2: only if Latin-transliterated Arabic terms remain.
+        if translit_map.has_translit_residue(text):
+            if client is None:
+                import anthropic
+                api_key = os.environ.get("ANTHROPIC_API_KEY")
+                if not api_key:
+                    print(f"  ✗ {f.name}  needs the LLM long tail but ANTHROPIC_API_KEY "
+                          f"is unset — writing map-only output with residue.", file=sys.stderr)
+                    failures += 1
+                    (OUT_DIR / f.name).write_text(text, encoding="utf-8")
+                    continue
+                client = anthropic.Anthropic(api_key=api_key)
+            converted = llm_convert(client, text, f.name)
+            if converted is None:
+                failures += 1
+                (OUT_DIR / f.name).write_text(text, encoding="utf-8")  # save map output anyway
+                continue
+            text = converted
+            llm_used += 1
+        else:
+            map_only += 1
 
         # Safety: every pre-existing vocalized Arabic block line must survive verbatim.
-        missing = [ln for ln in arabic_lines(text) if ln not in converted]
+        missing = [ln for ln in translit_map.arabic_lines(raw) if ln not in text]
         if missing:
             altered += 1
-            print(f"    ⚠ {f.name}: {len(missing)} existing Arabic block line(s) "
-                  f"changed by the model — review before narrating.", file=sys.stderr)
+            print(f"    ⚠ {f.name}: {len(missing)} existing Arabic block line(s) changed "
+                  f"— review before narrating.", file=sys.stderr)
 
-        (OUT_DIR / f.name).write_text(converted, encoding="utf-8")
+        (OUT_DIR / f.name).write_text(text, encoding="utf-8")
+        print(f"  ✓ {f.name}  {sum(hits.values())} term(s) mapped")
 
-    ok = len(files) - failures
-    print(f"\nDone. {ok} converted, {failures} failed, {altered} page(s) with "
-          f"altered Arabic blocks (flagged above).")
+    print(f"\nDone. {map_only} map-only, {llm_used} used Opus, {failures} failed, "
+          f"{altered} page(s) with altered Arabic blocks.")
     return 0 if failures == 0 else 1
 
 

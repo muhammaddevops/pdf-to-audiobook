@@ -13,7 +13,8 @@ voice then pronounces them natively instead of mangling the transliteration.
 Set ELEVENLABS_MODEL=eleven_v3 to A/B the read against multilingual v2.
 
 Normalization (deterministic, no LLM):
-  * ﷺ → "peace be upon him"; ؓ / رضي الله عنه → "may Allah be pleased with him".
+  * Honorific glyphs expanded to bare Arabic words (ﷺ → صلى الله عليه وسلم),
+    recited natively, with the bracketing pause dropped (translit_map).
   * fold_latin() now only cleans stray transliteration diacritics arabize.py left
     behind (converted terms are already Arabic script, so it no longer touches them).
   * Markdown emphasis stripped; citations and headers kept and read verbatim.
@@ -44,6 +45,8 @@ from typing import Optional
 
 import requests
 from dotenv import load_dotenv
+
+import translit_map
 
 SRC_DIR = Path("arabizedOutput")   # arabize.py output: Arabic-script inline terms
 OUT_DIR = Path("audio")
@@ -79,7 +82,9 @@ PAUSE_BETWEEN_CHUNKS = 0.35        # small pause at chunk seams (paragraph break
 # text over-pauses when read aloud. These drop grammatical-but-not-prosodic
 # breaks so Daniel flows. See docs/tts_narration_best_practices.md. Toggle to A/B.
 # --------------------------------------------------------------------------- #
-FLOW_HONORIFICS_INLINE = True   # read honorifics inline (no bracketing pause)
+# Honorific inlining (drop the bracketing pause) now happens in translit_map's
+# expand_honorifics, which also expands the glyphs to Arabic — so it's no longer a
+# toggle here. THIN_CITATION_COMMAS remains an A/B knob.
 # Off by default: by the pause table in the best-practices doc, an em dash and a
 # comma are BOTH "short pause", so swapping them barely changes pacing — and the
 # citation parens still pause on entry/exit regardless. It also alters citation
@@ -164,27 +169,14 @@ def normalize_numbers(text: str) -> str:
     return re.sub(r"[0-9]+", lambda m: number_to_words(int(m.group())), text)
 
 
-# Expanded honorific phrases that the source brackets as "(ﷺ)" / "(رضي الله عنه)".
-_HONORIFICS = (
-    "peace be upon him",
-    "may Allah be pleased with him",
-    "glorified and exalted is He",
-)
-
-
 def smooth_pacing(text: str) -> str:
     """Drop grammatical-but-not-prosodic pauses so the narrator flows.
 
-    multilingual v2 pauses on parentheses and commas; written honorifics and
-    citations therefore chop the sentence. We read honorifics inline and lighten
-    the citation grade comma. Both are conservative and toggle-guarded.
+    multilingual v2 pauses on parentheses and commas; citations therefore chop
+    the sentence. Honorific de-bracketing now happens in translit_map (which
+    expands the glyphs to Arabic words and drops their parentheses); this handles
+    the citation grade comma, which is conservative and toggle-guarded.
     """
-    if FLOW_HONORIFICS_INLINE:
-        # The source brackets each honorific glyph, so expansion leaves it
-        # parenthesised — Daniel pauses on entry and exit. Drop the brackets and
-        # let the set phrase blend into the sentence.
-        for phrase in _HONORIFICS:
-            text = text.replace(f"({phrase})", phrase)
     if THIN_CITATION_COMMAS:
         # "(Source 478, Sahih)" → "(Source 478 — Sahih)": an em dash separates
         # the grade without the full comma stop at the end of every quote.
@@ -197,25 +189,22 @@ def smooth_pacing(text: str) -> str:
 
 
 def preprocess(text: str) -> str:
-    """Expand honorifics, strip markdown, and fold Latin transliteration
-    diacritics to plain English for the narrator."""
-    # Prophetic honorific glyphs → English phrase.
-    text = text.replace("ﷺ", "peace be upon him").replace("ﷻ", "glorified and exalted is He")
-    # Baseer encodes the companion honorific ؓ as a private-use font glyph (U+F074),
-    # which renders as an empty '()' — map it to the English phrase.
-    text = text.replace("", "may Allah be pleased with him")
-    # Written companion honorific (bare, as Baseer emits it; ي/ى + gender/plural).
-    text = re.sub(r"رض[يى]\s+الله\s+عنه(?:ما|م|ا)?", "may Allah be pleased with him", text)
-    # Baseer sometimes drops the honorific, leaving empty parens (maybe with an
-    # invisible RTL/LRM direction mark inside).
-    text = re.sub(r"\([\s‎‏؜]*\)", "(may Allah be pleased with him)", text)
+    """Expand honorifics to Arabic words, strip markdown, and clean stray Latin
+    transliteration diacritics for the narrator."""
+    # Honorific glyphs → bare Arabic words (recited natively), brackets dropped.
+    # Idempotent: arabize.py already applied this, so on arabized text it's a no-op.
+    text = translit_map.expand_honorifics(text)
+    # Baseer sometimes drops the honorific entirely, leaving empty parens (maybe
+    # with an invisible RTL/LRM direction mark inside) — recover it as Arabic.
+    text = re.sub(r"\([\s‎‏؜]*\)", "رضي الله عنه", text)
     # Strip markdown emphasis markers.
     text = re.sub(r"\*+", "", text)
-    # Fold Latin transliteration diacritics to plain English (Arabic untouched).
+    # Clean any stray transliteration diacritics arabize.py left on missed terms
+    # (converted terms are already Arabic script, so this no longer folds names).
     text = fold_latin(text)
     # Spell numbers out so ElevenLabs' number normalizer never runs.
     text = normalize_numbers(text)
-    # Drop grammatical-but-not-prosodic pauses (honorific brackets, citation comma).
+    # Drop grammatical-but-not-prosodic pauses (citation comma; toggle-guarded).
     text = smooth_pacing(text)
     # Normalise whitespace.
     text = re.sub(r"[ \t]+", " ", text)

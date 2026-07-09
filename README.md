@@ -12,10 +12,12 @@ bookImages/*.png                     page scans
       │  Baseer OCR (specialist Arabic OCR, faithful on vocalized script)
       ▼
 baseerOutput/*.txt                   English prose + Arabic blocks + romanized terms
-      │  arabize.py  (GPT-4o):  convert Arabic-origin Romanized terms
-      │                         (al-Tirmidhī → الترمذي, Ṣaḥīḥ → صحيح) to BARE
-      │                         Arabic script — no harakat, the voice vowels them;
-      │                         existing vocalized Arabic blocks left untouched
+      │  arabize.py:  convert Arabic-origin Romanized terms (al-Tirmidhī →
+      │               الترمذي, Ṣaḥīḥ → صحيح) + honorific glyphs (ﷺ → صلى الله
+      │               عليه وسلم) to BARE Arabic script — no harakat, the voice
+      │               vowels them; existing vocalized Arabic blocks untouched.
+      │               Deterministic map first (translit_map.py); Claude Opus only
+      │               for pages with terms the map doesn't cover.
       ▼
 arabizedOutput/*.txt                 English prose + Arabic-script inline terms + blocks
       │  narrate.py  (deterministic, no LLM):
@@ -37,7 +39,8 @@ eleven_v3). See [`docs/tts_narration_best_practices.md`](docs/tts_narration_best
 
 | Path | What |
 |---|---|
-| `arabize.py` | **Pre-narration step** — GPT-4o converts Romanized terms → Arabic script (`baseerOutput/` → `arabizedOutput/`) |
+| `arabize.py` | **Pre-narration step** — deterministic map + Claude Opus for the long tail: Romanized terms → Arabic script (`baseerOutput/` → `arabizedOutput/`) |
+| `translit_map.py` | Shared Romanized→Arabic dictionary + honorific-glyph expansion (used by `arabize.py` and `convert_translit.py`) |
 | `narrate.py` | **Main pipeline** — text → `audio/full_book_<model>.wav` (ElevenLabs) |
 | `baseerOutput/` | Baseer OCR text (arabize.py input) |
 | `arabizedOutput/` | Arabic-script script (narrate.py input; generated) |
