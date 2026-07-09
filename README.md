@@ -42,6 +42,8 @@ eleven_v3). See [`docs/tts_narration_best_practices.md`](docs/tts_narration_best
 | `arabize.py` | **Pre-narration step** — deterministic map + Claude Opus for the long tail: Romanized terms → Arabic script (`baseerOutput/` → `arabizedOutput/`) |
 | `translit_map.py` | Shared Romanized→Arabic dictionary + honorific-glyph expansion (used by `arabize.py` and `convert_translit.py`) |
 | `narrate.py` | **Main pipeline** — text → `audio/full_book_<model>.wav` (ElevenLabs) |
+| `ab_score.py` | A/B renders v2 vs v3, scores pronunciation via Whisper round-trip, saves WAVs |
+| `tests/` | `pytest` suite for the text pipeline (no API keys needed) |
 | `baseerOutput/` | Baseer OCR text (arabize.py input) |
 | `arabizedOutput/` | Arabic-script script (narrate.py input; generated) |
 | `bookImages/` | Source page scans |
@@ -73,6 +75,12 @@ python arabize.py
 python narrate.py                    # → audio/full_book_eleven_multilingual_v2.wav
 ELEVENLABS_MODEL=eleven_v3 python narrate.py   # A/B the same text on v3
 python narrate.py path/to/textdir    # narrate a different folder
+
+# 2b. (optional) A/B v2 vs v3 with a pronunciation score + WAVs to listen to
+python ab_score.py                   # → audio/ab/<model>/full.wav + ab_report.md
+
+# Run the text-pipeline tests (no API keys needed)
+python -m pytest -q
 
 # Convert a rendered WAV to MP3 (128 kbps mono, no ffmpeg)
 python - <<'PY'

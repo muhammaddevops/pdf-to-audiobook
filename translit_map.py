@@ -97,15 +97,94 @@ REPLACEMENTS: list[tuple[str, str]] = [
     (r"wud[ūu]" + AP + r"?", "وضوء"),
     (r"raka" + AP + r"?[āa]t", "ركعات"),
     (r"Rama[ḍd][āa]n", "رمضان"),
-    (r"Isl[āa]m", "إسلام"),
+    (r"\bIsl[āa]m\b", "إسلام"),
     (r"[ŞṢ]uhr", "ظهر"),  # Baseer's mis-transliteration of Zuhr
     (SAHIH, "صحيح"),  # standalone Sahih, last
-    # ---- plain (unaccented) common terms — the residue detector can't flag
-    #      these, so they must live here to be converted at all. ----
-    (r"\bJannah\b", "جنة"),
-    (r"\bJahannam\b", "جهنم"),
-    (r"\bRamadan\b", "رمضان"),
 ]
+
+# --------------------------------------------------------------------------- #
+# Common Arabic vocabulary — the words that recur across most Islamic books.
+# This is the general-purpose core (NOT book-specific); grow it over time. Each
+# entry is case-insensitive ((?i)) and tolerant of the usual transliteration
+# variants (ā/a, ī/i, ū/u, and an optional leading ʿayn/hamza via AP). Bare
+# Arabic output, no harakat. Longer/compound terms come before their sub-words.
+# --------------------------------------------------------------------------- #
+_C = r"(?i)"  # case-insensitive prefix
+
+COMMON: list[tuple[str, str]] = [
+    # ---- the five daily prayers ----
+    (_C + r"\bFajr\b", "فجر"),
+    (_C + r"\bDhuhr\b", "ظهر"),
+    (_C + r"\b[DZ]uhr\b", "ظهر"),                       # Zuhr / Duhr
+    (_C + r"\b" + AP + r"?[ĀA]sr\b", "عصر"),
+    (_C + r"\bMaghrib\b", "مغرب"),
+    (_C + r"\b" + AP + r"?Ish[āa]" + AP + r"?\b", "عشاء"),   # Isha / ʿIshāʾ
+    # ---- pillars & acts of worship ----
+    (_C + r"\b[ŞṢ]al[āa][ht]\b", "صلاة"),               # salah / salat / ṣalāh
+    (_C + r"\bZak[āa][ht]\b", "زكاة"),
+    (_C + r"\b[ŞṢ]awm\b", "صوم"),
+    (_C + r"\b[ḤH]ajj\b", "حج"),
+    (_C + r"\b" + AP + r"?Umrah\b", "عمرة"),
+    (_C + r"\bAdh[āa]n\b", "أذان"),
+    (_C + r"\bIq[āa]mah\b", "إقامة"),
+    (_C + r"\bSuj[ūu]d\b", "سجود"),
+    (_C + r"\bRuk[ūu]" + AP + r"?\b", "ركوع"),
+    (_C + r"\bRak" + AP + r"?ah\b", "ركعة"),
+    (_C + r"\bTaraw[īi][ḥh]\b", "تراويح"),
+    # ---- core concepts ----
+    (_C + r"\b[īi]m[āa]n\b", "إيمان"),
+    (_C + r"\bTaqw[āa]\b", "تقوى"),
+    (_C + r"\bTaw[ḥh][īi]d\b", "توحيد"),
+    (_C + r"\bShirk\b", "شرك"),
+    (_C + r"\bKufr\b", "كفر"),
+    (_C + r"\bSunnah\b", "سنة"),
+    (_C + r"\bBid" + AP + r"?ah\b", "بدعة"),
+    (_C + r"\bFar[ḍd]\b", "فرض"),
+    (_C + r"\b[ḤH]al[āa]l\b", "حلال"),
+    (_C + r"\b[ḤH]ar[āa]m\b", "حرام"),
+    (_C + r"\bMakr[ūu]h\b", "مكروه"),
+    (_C + r"\bMusta[ḥh]abb\b", "مستحب"),
+    (_C + r"\bBarakah\b", "بركة"),
+    (_C + r"\bRa[ḥh]mah\b", "رحمة"),
+    (_C + r"\bJih[āa]d\b", "جهاد"),
+    (_C + r"\bDu" + AP + r"[āa]?\b", "دعاء"),           # dua / duʿāʾ
+    (_C + r"\bDhikr\b", "ذكر"),
+    (_C + r"\bTawbah\b", "توبة"),
+    (_C + r"\b[ŞṢ]abr\b", "صبر"),
+    (_C + r"\bShukr\b", "شكر"),
+    # ---- Qurʾān & scholarship ----
+    (_C + r"\bQur" + AP + r"?[āa]n\b", "قرآن"),
+    (_C + r"\bS[ūu]rah\b", "سورة"),
+    (_C + r"\b[āA]yah\b", "آية"),
+    (_C + r"\bTafs[īi]r\b", "تفسير"),
+    (_C + r"\bTajw[īi]d\b", "تجويد"),
+    # ---- places ----
+    (_C + r"\bMasjid\b", "مسجد"),
+    (_C + r"\bQiblah?\b", "قبلة"),
+    (_C + r"\bKa" + AP + r"?bah\b", "كعبة"),
+    (_C + r"\bMakkah\b", "مكة"),
+    (_C + r"\bMecca\b", "مكة"),
+    # ---- prophets, angels, well-known figures ----
+    (_C + r"\bMu[ḥh]ammad\b", "محمد"),
+    (_C + r"\bRas[ūu]l\b", "رسول"),
+    (_C + r"\bNab[īi]\b", "نبي"),
+    (_C + r"\bIbr[āa]h[īi]m\b", "إبراهيم"),
+    (_C + r"\bM[ūu]s[āa]\b", "موسى"),
+    (_C + r"\b" + AP + r"?[īI]s[āa]\b", "عيسى"),
+    (_C + r"\bY[ūu]suf\b", "يوسف"),
+    (_C + r"\bJibr[īi]l\b", "جبريل"),
+    (_C + r"\bAb[ūu] Bakr\b", "أبو بكر"),
+    (_C + r"\b" + AP + r"?Uthm[āa]n\b", "عثمان"),
+    (_C + r"\b" + AP + r"?Al[īi]\b", "علي"),
+    (_C + r"\b" + AP + r"?[āA]" + AP + r"?ishah\b", "عائشة"),
+    (_C + r"\bF[āa][ṭt]imah\b", "فاطمة"),
+    (_C + r"\bBil[āa]l\b", "بلال"),
+    # ---- paradise / hellfire (kept from the seed list) ----
+    (_C + r"\bJannah\b", "جنة"),
+    (_C + r"\bJahannam\b", "جهنم"),
+]
+
+REPLACEMENTS += COMMON
 
 # Precompile.
 _RULES = [(re.compile(pat), rep) for pat, rep in REPLACEMENTS]

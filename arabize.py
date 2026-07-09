@@ -9,20 +9,20 @@ so the multilingual voice reads it natively, code-switching inside the sentence.
 Two-stage, cheapest-first:
 
   1. DETERMINISTIC MAP (translit_map.py) — expand honorific glyphs to Arabic words
-     and convert the known/frequent terms to bare Arabic script. Free, consistent,
-     no API call.
-  2. LLM LONG TAIL (Claude Opus) — only if a page still has Latin-transliterated
-     Arabic terms the map didn't cover. Pages fully handled by the map skip the
-     call entirely.
+     and convert the common/known terms to bare Arabic script. Free, consistent,
+     no API call. The map is a general common-Arabic-word list, not book-specific.
+  2. LLM LONG TAIL (GPT-4o) — only if a page still has Latin-transliterated Arabic
+     terms the map didn't cover (rare proper nouns). Pages fully handled by the map
+     skip the call entirely.
 
 Per the design decision, converted terms are left BARE — no harakat — and the TTS
 voice supplies the vowels; injecting tashkeel only adds pronunciation-error risk.
 The Arabic block quotes already printed on the page keep their vocalization.
 
-  baseerOutput/*.txt → map (+ Opus for the tail) → arabizedOutput/*.txt → narrate.py
+  baseerOutput/*.txt → map (+ GPT-4o for the tail) → arabizedOutput/*.txt → narrate.py
 
 Environment (.env):
-  ANTHROPIC_API_KEY   (required only for pages that hit the LLM long tail)
+  OPENAI_API_KEY   (required only for pages that hit the LLM long tail)
 
 Usage:
   python arabize.py                    # converts ./baseerOutput → ./arabizedOutput
@@ -42,7 +42,7 @@ from dotenv import load_dotenv
 
 import translit_map
 
-MODEL = "claude-opus-4-8"
+MODEL = "gpt-4o"
 SRC_DIR = Path("baseerOutput")
 OUT_DIR = Path("arabizedOutput")
 
@@ -59,9 +59,8 @@ LLM_PROMPT = (
     "character, including its existing harakat. Do NOT revocalize or edit it.\n"
     "3. Leave genuinely English words in English.\n"
     "4. Leave digits, markdown, parentheses, and punctuation untouched, and "
-    "preserve the line and paragraph structure EXACTLY.\n"
-    "5. Return ONLY the full rewritten page text — no preamble, no commentary, no "
-    "code fences."
+    "preserve the line and paragraph structure EXACTLY.\n\n"
+    'Return ONLY a JSON object {"converted": "<the full rewritten page text>"}.'
 )
 
 
@@ -71,31 +70,32 @@ def natural_key(path: Path) -> list:
 
 
 def llm_convert(client, text: str, name: str) -> Optional[str]:
-    """Convert the residual Romanized terms via Claude Opus. Returns text or None."""
-    import anthropic
+    """Convert the residual Romanized terms via GPT-4o. Returns text or None."""
+    from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 
     start = time.perf_counter()
     try:
-        resp = client.messages.create(
+        resp = client.chat.completions.create(
             model=MODEL,
-            max_tokens=4096,
-            output_config={"effort": "low"},  # mechanical conversion — no deep thinking
+            temperature=0.0,
+            response_format={"type": "json_object"},
             messages=[{"role": "user", "content": f"{LLM_PROMPT}\n\n---PAGE---\n{text}"}],
         )
-        if resp.stop_reason == "refusal":
-            print(f"  ✗ {name}  model refused conversion", file=sys.stderr)
-            return None
-        out = "".join(b.text for b in resp.content if b.type == "text").strip()
+        import json
+        data = json.loads(resp.choices[0].message.content or "{}")
+        out = (data.get("converted") or "").strip()
         if not out:
             print(f"  ✗ {name}  model returned empty conversion", file=sys.stderr)
             return None
-        print(f"    ↳ {name}  Opus long-tail pass  {time.perf_counter() - start:.1f}s")
+        print(f"    ↳ {name}  GPT-4o long-tail pass  {time.perf_counter() - start:.1f}s")
         return out
-    except anthropic.APIStatusError as exc:
-        print(f"  ✗ {name}  API error ({exc.status_code}): {exc.message}", file=sys.stderr)
-    except anthropic.APIConnectionError as exc:
-        print(f"  ✗ {name}  connection error: {exc}", file=sys.stderr)
-    except Exception as exc:  # final safety net
+    except (APITimeoutError, APIConnectionError) as exc:
+        print(f"  ✗ {name}  network/timeout: {exc}", file=sys.stderr)
+    except RateLimitError as exc:
+        print(f"  ✗ {name}  rate limited: {exc}", file=sys.stderr)
+    except APIError as exc:
+        print(f"  ✗ {name}  API error: {exc}", file=sys.stderr)
+    except Exception as exc:  # final safety net (incl. bad JSON)
         print(f"  ✗ {name}  unexpected: {exc}", file=sys.stderr)
     return None
 
@@ -129,15 +129,15 @@ def main(argv: list[str]) -> int:
         # Stage 2: only if Latin-transliterated Arabic terms remain.
         if translit_map.has_translit_residue(text):
             if client is None:
-                import anthropic
-                api_key = os.environ.get("ANTHROPIC_API_KEY")
+                from openai import OpenAI
+                api_key = os.environ.get("OPENAI_API_KEY")
                 if not api_key:
-                    print(f"  ✗ {f.name}  needs the LLM long tail but ANTHROPIC_API_KEY "
+                    print(f"  ✗ {f.name}  needs the LLM long tail but OPENAI_API_KEY "
                           f"is unset — writing map-only output with residue.", file=sys.stderr)
                     failures += 1
                     (OUT_DIR / f.name).write_text(text, encoding="utf-8")
                     continue
-                client = anthropic.Anthropic(api_key=api_key)
+                client = OpenAI(api_key=api_key, timeout=120.0)
             converted = llm_convert(client, text, f.name)
             if converted is None:
                 failures += 1
@@ -158,7 +158,7 @@ def main(argv: list[str]) -> int:
         (OUT_DIR / f.name).write_text(text, encoding="utf-8")
         print(f"  ✓ {f.name}  {sum(hits.values())} term(s) mapped")
 
-    print(f"\nDone. {map_only} map-only, {llm_used} used Opus, {failures} failed, "
+    print(f"\nDone. {map_only} map-only, {llm_used} used GPT-4o, {failures} failed, "
           f"{altered} page(s) with altered Arabic blocks.")
     return 0 if failures == 0 else 1
 
