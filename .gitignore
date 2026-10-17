@@ -1,0 +1,23 @@
+# --- Secrets (NEVER commit) ---
+.env
+.env.local
+.env.*.local
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+
+# --- Generated audio (large; regenerate with narrate.py) ---
+audio/
+
+# --- Generated arabized script (regenerate with arabize.py; needs OPENAI_API_KEY) ---
+arabizedOutput/
+
+# --- OS / editor / tooling ---
+.DS_Store
+.claude/

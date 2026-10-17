@@ -1,0 +1,15 @@
+# Core
+python-dotenv        # load .env
+requests             # ElevenLabs REST + Baseer HTTP
+
+# OCR / vision LLMs
+openai               # GPT-4o (arabize.py long tail, transcribe.py) + Whisper (ab_score.py)
+anthropic            # Claude Opus vision fallback (opus_ocr.py) — optional at runtime
+
+# Audio
+lameenc              # WAV → MP3 encoding (no ffmpeg needed)
+
+# Testing (dev only)
+pytest               # python -m pytest -q  (tests/ — no API keys needed)
+
+# translit_map.py / hadith_lookup.py / quran_lookup.py use only the stdlib.
