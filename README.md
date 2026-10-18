@@ -1,5 +1,11 @@
 # audiobook-render
 
+![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
+![ElevenLabs](https://img.shields.io/badge/ElevenLabs-TTS-black)
+![OpenAI](https://img.shields.io/badge/GPT--4o-vision%20OCR-412991?logo=openai&logoColor=white)
+![Claude](https://img.shields.io/badge/Claude%20Opus-transliteration-D97757)
+![Tests](https://img.shields.io/badge/pytest-19%20passing-brightgreen)
+
 Turn scanned pages of bilingual (Arabic / English) Islamic books into a smooth,
 single-voice audiobook. Built for pages with heavy academic transliteration,
 vocalized Arabic hadith/Qurʾān blocks, and inline honorific glyphs — the things
@@ -7,28 +13,21 @@ that trip up naive OCR + TTS.
 
 ## Pipeline (current, single-voice)
 
+```mermaid
+flowchart TD
+    A["bookImages/*.png<br/>page scans"]
+    B["baseerOutput/*.txt<br/>English prose + vocalized Arabic blocks + romanized terms"]
+    C["arabizedOutput/*.txt<br/>English prose with Arabic-script inline terms"]
+    D["audio/full_book_&lt;model&gt;.wav<br/>one continuous narration → .mp3"]
+    A -- "Baseer OCR<br/>specialist Arabic OCR, faithful on vocalized script" --> B
+    B -- "arabize.py<br/>Romanized terms → bare Arabic script;<br/>deterministic map first, Claude Opus only for the long tail" --> C
+    C -- "narrate.py (deterministic, no LLM)<br/>merge pages across seams, expand honorifics,<br/>spell out numbers, chunk + stitch — one ElevenLabs call per chunk" --> D
 ```
-bookImages/*.png                     page scans
-      │  Baseer OCR (specialist Arabic OCR, faithful on vocalized script)
-      ▼
-baseerOutput/*.txt                   English prose + Arabic blocks + romanized terms
-      │  arabize.py:  convert Arabic-origin Romanized terms (al-Tirmidhī →
-      │               الترمذي, Ṣaḥīḥ → صحيح) + honorific glyphs (ﷺ → صلى الله
-      │               عليه وسلم) to BARE Arabic script — no harakat, the voice
-      │               vowels them; existing vocalized Arabic blocks untouched.
-      │               Deterministic map first (translit_map.py); Claude Opus only
-      │               for pages with terms the map doesn't cover.
-      ▼
-arabizedOutput/*.txt                 English prose + Arabic-script inline terms + blocks
-      │  narrate.py  (deterministic, no LLM):
-      │    • build_document()  — merge pages into one continuous document so
-      │                          sentences flow across page seams
-      │    • preprocess()      — expand honorifics inline (ﷺ → "peace be upon him"),
-      │                          spell out numbers, strip markdown, clean stray marks
-      │    • chunk + request-stitch, one ElevenLabs call per chunk
-      ▼
-audio/full_book_<model>.wav          one continuous narration  →  .mp3 via lameenc
-```
+
+`arabize.py` converts Arabic-origin Romanized terms (al-Tirmidhī → الترمذي, Ṣaḥīḥ →
+صحيح) and honorific glyphs (ﷺ → صلى الله عليه وسلم) to **bare** Arabic script — no
+harakat, the voice vowels them — while leaving already-vocalized Arabic block quotes
+untouched.
 
 One voice reads the whole page, code-switching inside the sentence: English prose
 in English, the inline Arabic-script terms and the vocalized block quotes recited
@@ -108,3 +107,7 @@ Tuning lives at the top of `narrate.py`: `VOICE_SETTINGS`, `FLOW_HONORIFICS_INLI
 - **Scaling to a full book:** switch the merge unit from *page* to *chapter/section*
   (pages split mid-sentence; chapters don't). The narration logic carries over
   unchanged — only the chunking unit changes.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
