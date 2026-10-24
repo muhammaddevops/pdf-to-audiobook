@@ -13,3 +13,7 @@ lameenc              # WAV → MP3 encoding (no ffmpeg needed)
 pytest               # python -m pytest -q  (tests/ — no API keys needed)
 
 # translit_map.py / hadith_lookup.py / quran_lookup.py use only the stdlib.
+
+# PDF rendering (pdf_to_images.py)
+pypdfium2            # PDF page rendering — pure pip, bundled engine
+pillow               # bitmap → PNG

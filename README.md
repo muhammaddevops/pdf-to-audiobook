@@ -6,16 +6,18 @@
 ![Claude](https://img.shields.io/badge/Claude%20Opus-transliteration-D97757)
 ![Tests](https://img.shields.io/badge/pytest-19%20passing-brightgreen)
 
-Turn scanned pages of bilingual (Arabic / English) Islamic books into a smooth,
-single-voice audiobook. Built for pages with heavy academic transliteration,
-vocalized Arabic hadith/Qurʾān blocks, and inline honorific glyphs — the things
-that trip up naive OCR + TTS.
+Turn any bilingual Arabic / English book — a PDF or a folder of page scans — into
+a smooth, single-voice audiobook. Battle-tested on the hardest input there is:
+academic texts with heavy transliteration, fully vocalized Arabic quotation
+blocks, and inline honorific glyphs — the things that trip up naive OCR + TTS.
 
 ## Pipeline (current, single-voice)
 
 ```mermaid
 flowchart TD
+    P["book.pdf"]
     A["bookImages/*.png<br/>page scans"]
+    P -- "pdf_to_images.py<br/>render pages (pypdfium2, 300 dpi)" --> A
     B["baseerOutput/*.txt<br/>English prose + vocalized Arabic blocks + romanized terms"]
     C["arabizedOutput/*.txt<br/>English prose with Arabic-script inline terms"]
     D["audio/full_book_&lt;model&gt;.wav<br/>one continuous narration → .mp3"]
@@ -38,6 +40,7 @@ eleven_v3). See [`docs/tts_narration_best_practices.md`](docs/tts_narration_best
 
 | Path | What |
 |---|---|
+| `pdf_to_images.py` | **Step 0** — render a PDF's pages to `bookImages/*.png` (pure pip, no system deps) |
 | `arabize.py` | **Pre-narration step** — deterministic map + Claude Opus for the long tail: Romanized terms → Arabic script (`baseerOutput/` → `arabizedOutput/`) |
 | `translit_map.py` | Shared Romanized→Arabic dictionary + honorific-glyph expansion (used by `arabize.py` and `convert_translit.py`) |
 | `narrate.py` | **Main pipeline** — text → `audio/full_book_<model>.wav` (ElevenLabs) |
@@ -66,11 +69,15 @@ cp .env.example .env      # then fill in ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID
 
 > **Sample data:** the repo ships with one small synthetic sample page in
 > `baseerOutput/` so the pipeline and tests run out of the box. To render a real
-> book, drop page scans into `bookImages/` and their OCR text into `baseerOutput/`.
+> book, start from a PDF with `pdf_to_images.py` (or drop page scans into
+> `bookImages/`) and put their OCR text into `baseerOutput/`.
 
 ## Usage
 
 ```bash
+# 0. (if starting from a PDF) render pages to images
+python pdf_to_images.py mybook.pdf --first 12 --last 17
+
 # 1. Convert Romanized Arabic terms to Arabic script (baseerOutput/ → arabizedOutput/)
 python arabize.py
 
