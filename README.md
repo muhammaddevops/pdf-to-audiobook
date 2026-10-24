@@ -1,4 +1,4 @@
-# audiobook-render
+# pdf-to-audiobook
 
 ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
 ![ElevenLabs](https://img.shields.io/badge/ElevenLabs-TTS-black)
