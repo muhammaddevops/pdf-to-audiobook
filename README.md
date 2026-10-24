@@ -49,8 +49,7 @@ eleven_v3). See [`docs/tts_narration_best_practices.md`](docs/tts_narration_best
 | `baseerOutput/` | Baseer OCR text (arabize.py input) |
 | `arabizedOutput/` | Arabic-script script (narrate.py input; generated) |
 | `bookImages/` | Source page scans |
-| `convert_translit.py` | Romanized → Arabic-script conversion (dictionary; feeds `opusAfterBaseer/`) |
-| `opusAfterBaseer/` | Arabic-inline variant of the text (alternative voice path) |
+| `convert_translit.py` | Standalone Romanized → Arabic-script conversion (dictionary-only CLI) |
 | `transcribe.py` | GPT-4o vision OCR + canonical hadith/Qurʾān resolution (alt/experimental path) |
 | `hadith_lookup.py`, `quran_lookup.py` | Canonical text lookup (fawazahmed0 datasets) |
 | `baseer_ocr.py`, `opus_ocr.py` | Specialist / Opus OCR fallbacks |
